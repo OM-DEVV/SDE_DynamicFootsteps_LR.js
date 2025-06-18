@@ -1,9 +1,9 @@
 /*:
  * @pluginname SDE_DynamicFootsteps_LR
- * @author Your Name (Senior Developer)
+ * @author OM-Devv & AI
  * @version 2.3.0
  * @target MZ
- * @url https://your-plugin-repo.com
+ * @url 
  * @orderAfter VisuMZ_0_CoreEngine
  * @orderAfter mz3d-jump-mod
  *
