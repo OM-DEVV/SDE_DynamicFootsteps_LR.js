@@ -1,9 +1,9 @@
 /*:
  * @pluginname SDE_DynamicFootsteps_LR
- * @author OM-Devv & AI
- * @version 2.3.0
+ * @author Your Name (Senior Developer)
+ * @version 2.4.0
  * @target MZ
- * @url 
+ * @url https://your-plugin-repo.com
  * @orderAfter VisuMZ_0_CoreEngine
  * @orderAfter mz3d-jump-mod
  *
@@ -13,6 +13,12 @@
  *
  * This plugin provides a robust system for playing dynamic, alternating
  * Left/Right footstep sounds based on the terrain tag the player is on.
+ *
+ * --- VERSION 2.4.0 UPDATE ---
+ * - Added a new "Play Condition" system to SoundConfigLR. Each sound can now
+ *   be configured to only play if a specified Game Variable meets a certain
+ *   conditional value (e.g., Variable 1 >= 10). This allows for dynamic
+ *   sound suppression or activation based on game state (e.g., "stealth mode").
  *
  * --- VERSION 2.3.0 UPDATE ---
  * - Fixed a timing issue where a footstep sound could play at the start
@@ -25,6 +31,9 @@
  * 2. NEW: Set the "Jump Input Symbol" parameter to match the input symbol
  *    defined in your jump plugin (the default is 'jump').
  * 3. Configure Terrain Tags, sound files, and other parameters as before.
+ * 4. NEW: Within each sound configuration (Default or Terrain-specific),
+ *    you can now enable a "Play Condition" to make the sound play only
+ *    when a specified game variable meets a set value criteria.
  *
  * ============================================================================
  *
@@ -56,7 +65,7 @@
  * @text Default Footsteps (L/R)
  * @desc The L/R sound pair to play when the terrain tag is 0 or not found.
  * @type struct<SoundConfigLR>
- * @default {"nameLeft":"","nameRight":"","volume":"90","pitch":"100"}
+ * @default {"nameLeft":"","nameRight":"","volume":"90","pitch":"100","playConditionEnabled":"false","playConditionVariableId":"0","playConditionOperator":"==","playConditionValue":"0"}
  *
  * @param pitchVariation
  * @text Pitch Variation
@@ -120,116 +129,205 @@
  * @min 50
  * @max 150
  * @default 100
+ *
+ * @param playConditionEnabled
+ * @text Play Condition Enabled
+ * @desc If true, the sound will only play if a specified variable meets a condition.
+ * @type boolean
+ * @default false
+ *
+ * @param playConditionVariableId
+ * @text Condition Variable ID
+ * @desc The ID of the game variable to check. Set to 0 to disable if condition is enabled.
+ * @type variable
+ * @default 0
+ *
+ * @param playConditionOperator
+ * @text Condition Operator
+ * @desc The comparison operator for the variable value.
+ * @type select
+ * @option = (Equal To)
+ * @value ==
+ * @option != (Not Equal To)
+ * @value !=
+ * @option > (Greater Than)
+ * @value >
+ * @option < (Less Than)
+ * @value <
+ * @option >= (Greater Than or Equal To)
+ * @value >=
+ * @option <= (Less Than or Equal To)
+ * @value <=
+ * @default ==
+ *
+ * @param playConditionValue
+ * @text Condition Value
+ * @desc The value to compare the variable against.
+ * @type number
+ * @default 0
  */
 
 (() => {
-    'use strict';
+  'use strict';
 
-    const PLUGIN_NAME = 'SDE_DynamicFootsteps_LR';
-    const params = PluginManager.parameters(PLUGIN_NAME);
+  const PLUGIN_NAME = 'SDE_DynamicFootsteps_LR';
+  const params = PluginManager.parameters(PLUGIN_NAME);
 
-    const masterSwitchId = Number(params.masterSwitchId || 0);
-    const volumeVariableId = Number(params.volumeVariableId || 0);
-    const jumpInputSymbol = String(params.jumpInputSymbol || '');
-    const pitchVariation = Number(params.pitchVariation || 8);
-    const volumeVariation = Number(params.volumeVariation || 5);
+  const masterSwitchId = Number(params.masterSwitchId || 0);
+  const volumeVariableId = Number(params.volumeVariableId || 0);
+  const jumpInputSymbol = String(params.jumpInputSymbol || '');
+  const pitchVariation = Number(params.pitchVariation || 8);
+  const volumeVariation = Number(params.volumeVariation || 5);
 
-    const parseSoundConfigLR = (jsonString) => {
-        if (!jsonString) return null;
-        const config = JSON.parse(jsonString);
-        return {
-            nameLeft: String(config.nameLeft || ''),
-            nameRight: String(config.nameRight || ''),
-            volume: Number(config.volume || 90),
-            pitch: Number(config.pitch || 100)
-        };
+  const parseSoundConfigLR = (jsonString) => {
+    if (!jsonString) return null;
+    const config = JSON.parse(jsonString);
+    return {
+      nameLeft: String(config.nameLeft || ''),
+      nameRight: String(config.nameRight || ''),
+      volume: Number(config.volume || 90),
+      pitch: Number(config.pitch || 100),
+      // --- New Play Condition Parameters ---
+      playConditionEnabled: String(config.playConditionEnabled || 'false') === 'true',
+      playConditionVariableId: Number(config.playConditionVariableId || 0),
+      playConditionOperator: String(config.playConditionOperator || '=='),
+      playConditionValue: Number(config.playConditionValue || 0)
+      // --- End New Parameters ---
     };
+  };
 
-    const defaultSoundPair = parseSoundConfigLR(params.defaultFootsteps);
-    const terrainSoundMap = new Map();
-    if (params.terrainSoundMap) {
-        const terrainConfigs = JSON.parse(params.terrainSoundMap);
-        for (const configStr of terrainConfigs) {
-            const config = JSON.parse(configStr);
-            const tag = Number(config.terrainTag);
-            const soundConfig = parseSoundConfigLR(config.sound);
-            if (tag > 0 && soundConfig && (soundConfig.nameLeft || soundConfig.nameRight)) {
-                terrainSoundMap.set(tag, soundConfig);
-            }
-        }
+  const defaultSoundPair = parseSoundConfigLR(params.defaultFootsteps);
+  const terrainSoundMap = new Map();
+  if (params.terrainSoundMap) {
+    const terrainConfigs = JSON.parse(params.terrainSoundMap);
+    for (const configStr of terrainConfigs) {
+      const config = JSON.parse(configStr);
+      const tag = Number(config.terrainTag);
+      const soundConfig = parseSoundConfigLR(config.sound);
+      if (tag > 0 && soundConfig && (soundConfig.nameLeft || soundConfig.nameRight)) {
+        terrainSoundMap.set(tag, soundConfig);
+      }
+    }
+  }
+
+  const _Game_System_initialize = Game_System.prototype.initialize;
+  Game_System.prototype.initialize = function() {
+    _Game_System_initialize.call(this);
+    this._isNextFootLeft = true;
+  };
+
+  const _Game_Player_increaseSteps = Game_Player.prototype.increaseSteps;
+  Game_Player.prototype.increaseSteps = function() {
+    _Game_Player_increaseSteps.call(this);
+    if (this.canPlayFootstepSound()) {
+      const terrainTag = this.terrainTag();
+      const soundConfig = terrainSoundMap.get(terrainTag) || defaultSoundPair;
+      if (soundConfig) {
+        this.playAlternatingFootstep(soundConfig);
+      }
+    }
+  };
+
+  /**
+   * @MODIFIED v2.3.0
+   * This function now predictively checks for jump input on the same frame.
+   */
+  Game_Player.prototype.canPlayFootstepSound = function() {
+    // --- PREDICTIVE JUMP CHECK ---
+    // If the jump input is triggered on the same frame as a move,
+    // prioritize the jump and suppress the footstep sound.
+    if (jumpInputSymbol && Input.isTriggered(jumpInputSymbol)) {
+      return false;
     }
 
-    const _Game_System_initialize = Game_System.prototype.initialize;
-    Game_System.prototype.initialize = function() {
-        _Game_System_initialize.call(this);
-        this._isNextFootLeft = true;
-    };
-    
-    const _Game_Player_increaseSteps = Game_Player.prototype.increaseSteps;
-    Game_Player.prototype.increaseSteps = function() {
-        _Game_Player_increaseSteps.call(this);
-        if (this.canPlayFootstepSound()) {
-            const terrainTag = this.terrainTag();
-            const soundConfig = terrainSoundMap.get(terrainTag) || defaultSoundPair;
-            if (soundConfig) {
-                this.playAlternatingFootstep(soundConfig);
-            }
-        }
-    };
+    // --- EXISTING JUMP/FALL CHECK ---
+    // If the mv3d_sprite object exists and its 'falling' property is true,
+    // the player is already airborne.
+    if (this.mv3d_sprite && this.mv3d_sprite.falling) {
+      return false;
+    }
 
-    /**
-     * @MODIFIED v2.3.0
-     * This function now predictively checks for jump input on the same frame.
-     */
-    Game_Player.prototype.canPlayFootstepSound = function() {
-        // --- PREDICTIVE JUMP CHECK ---
-        // If the jump input is triggered on the same frame as a move,
-        // prioritize the jump and suppress the footstep sound.
-        if (jumpInputSymbol && Input.isTriggered(jumpInputSymbol)) {
-            return false;
-        }
+    // --- ORIGINAL CHECKS ---
+    if (masterSwitchId > 0 && !$gameSwitches.value(masterSwitchId)) {
+      return false;
+    }
 
-        // --- EXISTING JUMP/FALL CHECK ---
-        // If the mv3d_sprite object exists and its 'falling' property is true,
-        // the player is already airborne.
-        if (this.mv3d_sprite && this.mv3d_sprite.falling) {
-            return false;
-        }
-        
-        // --- ORIGINAL CHECKS ---
-        if (masterSwitchId > 0 && !$gameSwitches.value(masterSwitchId)) {
-            return false;
-        }
-        
-        return this.isNormal() && !this.isMoveRouteForcing() && !$gameMap.isEventRunning();
-    };
+    return this.isNormal() && !this.isMoveRouteForcing() && !$gameMap.isEventRunning();
+  };
 
-    Game_Player.prototype.playAlternatingFootstep = function(config) {
-        const isLeft = $gameSystem._isNextFootLeft;
-        const soundName = isLeft ? config.nameLeft : config.nameRight;
+  Game_Player.prototype.playAlternatingFootstep = function(config) {
+    const isLeft = $gameSystem._isNextFootLeft;
+    const soundName = isLeft ? config.nameLeft : config.nameRight;
 
-        if (!soundName) {
-            $gameSystem._isNextFootLeft = !isLeft;
-            return;
-        }
-        
-        const se = { name: soundName, pan: 0 };
-        const pitchRand = (Math.random() - 0.5) * 2 * pitchVariation;
-        se.pitch = Math.round(config.pitch + pitchRand);
-        const volumeRand = (Math.random() - 0.5) * 2 * volumeVariation;
-        let finalVolume = config.volume + volumeRand;
+    // --- NEW: Play Condition Check ---
+    if (config.playConditionEnabled) {
+      const variableId = config.playConditionVariableId;
+      if (variableId === 0) { // If condition enabled but no variable specified, default to not playing.
+          $gameSystem._isNextFootLeft = !isLeft; // Still alternate foot
+          return;
+      }
+      const variableValue = $gameVariables.value(variableId);
+      const conditionValue = config.playConditionValue;
+      const operator = config.playConditionOperator;
 
-        if (volumeVariableId > 0) {
-            const masterVolumePercent = $gameVariables.value(volumeVariableId);
-            const masterVolumeMultiplier = Math.max(0, Math.min(100, masterVolumePercent)) / 100;
-            finalVolume *= masterVolumeMultiplier;
-        }
-        se.volume = Math.round(finalVolume);
-        se.pitch = Math.max(50, Math.min(150, se.pitch));
-        se.volume = Math.max(0, Math.min(100, se.volume));
-        
-        AudioManager.playSe(se);
+      let conditionMet = false;
+      switch (operator) {
+        case '==':
+          conditionMet = variableValue === conditionValue;
+          break;
+        case '!=':
+          conditionMet = variableValue !== conditionValue;
+          break;
+        case '>':
+          conditionMet = variableValue > conditionValue;
+          break;
+        case '<':
+          conditionMet = variableValue < conditionValue;
+          break;
+        case '>=':
+          conditionMet = variableValue >= conditionValue;
+          break;
+        case '<=':
+          conditionMet = variableValue <= conditionValue;
+          break;
+        default:
+          conditionMet = false; // Should not happen with select type, but good for robustness
+      }
+
+      if (!conditionMet) {
+        // Condition not met, so don't play the sound.
+        // Importantly, still alternate the foot for the next step to maintain L/R sequence.
         $gameSystem._isNextFootLeft = !isLeft;
+        return;
+      }
+    }
+    // --- End Play Condition Check ---
+
+    if (!soundName) {
+      $gameSystem._isNextFootLeft = !isLeft; // Still alternate foot even if no sound is assigned
+      return;
+    }
+
+    const se = {
+      name: soundName,
+      pan: 0
     };
+    const pitchRand = (Math.random() - 0.5) * 2 * pitchVariation;
+    se.pitch = Math.round(config.pitch + pitchRand);
+    const volumeRand = (Math.random() - 0.5) * 2 * volumeVariation;
+    let finalVolume = config.volume + volumeRand;
+
+    if (volumeVariableId > 0) {
+      const masterVolumePercent = $gameVariables.value(volumeVariableId);
+      const masterVolumeMultiplier = Math.max(0, Math.min(100, masterVolumePercent)) / 100;
+      finalVolume *= masterVolumeMultiplier;
+    }
+    se.volume = Math.round(finalVolume);
+    se.pitch = Math.max(50, Math.min(150, se.pitch));
+    se.volume = Math.max(0, Math.min(100, se.volume));
+
+    AudioManager.playSe(se);
+    $gameSystem._isNextFootLeft = !isLeft;
+  };
 
 })();
